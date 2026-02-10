@@ -1,0 +1,337 @@
+import { useState, useRef, useCallback } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { config } from '../../data/config';
+import { navigationLinks } from '../../data/navigation';
+import { useNavbarScroll } from '../../hooks/useNavbarScroll';
+
+function NestedDropdownItem({ item, onClose }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const timeoutRef = useRef(null);
+
+  const handleMouseEnter = () => {
+    clearTimeout(timeoutRef.current);
+    setIsOpen(true);
+  };
+
+  const handleMouseLeave = () => {
+    timeoutRef.current = setTimeout(() => setIsOpen(false), 150);
+  };
+
+  if (!item.children) {
+    return (
+      <Link
+        to={item.path}
+        onClick={onClose}
+        className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-text hover:text-primary hover:bg-gray-50 transition-colors"
+      >
+        <i className={`${item.icon} text-primary/60 w-4`}></i>
+        {item.label}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="relative" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+      <Link
+        to={item.path}
+        onClick={onClose}
+        className="flex items-center justify-between px-4 py-2.5 text-sm text-gray-text hover:text-primary hover:bg-gray-50 transition-colors cursor-pointer"
+      >
+        <div className="flex items-center gap-3">
+          <i className={`${item.icon} text-primary/60 w-4`}></i>
+          {item.label}
+        </div>
+        <svg className={`w-4 h-4 transition-transform duration-200 ${isOpen ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path>
+        </svg>
+      </Link>
+      {/* Nested dropdown */}
+      <div
+        className={`absolute left-full top-0 ml-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 transition-all duration-300 ease-in-out z-[60] ${
+          isOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-2'
+        }`}
+      >
+        <div className="py-2">
+          {item.children.map((child) => (
+            <Link
+              key={child.path}
+              to={child.path}
+              onClick={onClose}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-text hover:text-primary hover:bg-gray-50 transition-colors"
+            >
+              <i className={`${child.icon} text-primary/60 w-4`}></i>
+              {child.label}
+            </Link>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NavDropdown({ item, onClose }) {
+  return (
+    <div className="py-2">
+      {item.children.map((child) => (
+        <NestedDropdownItem key={child.path} item={child} onClose={onClose} />
+      ))}
+    </div>
+  );
+}
+
+function MobileMenu({ isOpen, onClose }) {
+  const [expandedItems, setExpandedItems] = useState({});
+  const [expandedSubItems, setExpandedSubItems] = useState({});
+
+  const toggleExpand = (key) => {
+    setExpandedItems((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleSubExpand = (key) => {
+    setExpandedSubItems((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        className={`fixed inset-0 bg-black/50 z-40 transition-opacity duration-300 md:hidden ${
+          isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'
+        }`}
+        onClick={onClose}
+      />
+      {/* Slide-out panel */}
+      <div
+        className={`fixed top-0 right-0 h-full w-80 bg-white z-50 shadow-xl transform transition-transform duration-300 ease-in-out md:hidden overflow-y-auto ${
+          isOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-8">
+            <img src={config.company.logo.main} alt={config.company.logo.alt} className="h-10 w-auto" />
+            <button onClick={onClose} className="text-dark-text">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+
+          <nav className="space-y-1">
+            {navigationLinks.map((link) => {
+              if (!link.children) {
+                return (
+                  <Link
+                    key={link.key}
+                    to={link.path}
+                    onClick={onClose}
+                    className="block px-3 py-3 text-base font-medium text-dark-text hover:text-primary transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                );
+              }
+
+              return (
+                <div key={link.key}>
+                  <button
+                    onClick={() => toggleExpand(link.key)}
+                    className="flex items-center justify-between w-full px-3 py-3 text-base font-medium text-dark-text hover:text-primary transition-colors"
+                  >
+                    {link.label}
+                    <svg
+                      className={`w-4 h-4 transition-transform duration-200 ${expandedItems[link.key] ? 'rotate-180' : ''}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                  </button>
+                  {expandedItems[link.key] && (
+                    <div className="pl-4 space-y-1">
+                      {link.children.map((child) => {
+                        if (!child.children) {
+                          return (
+                            <Link
+                              key={child.path}
+                              to={child.path}
+                              onClick={onClose}
+                              className="flex items-center gap-3 px-3 py-2 text-sm text-gray-text hover:text-primary transition-colors"
+                            >
+                              <i className={`${child.icon} text-primary/60 w-4 text-xs`}></i>
+                              {child.label}
+                            </Link>
+                          );
+                        }
+
+                        return (
+                          <div key={child.path}>
+                            <button
+                              onClick={() => toggleSubExpand(child.path)}
+                              className="flex items-center justify-between w-full px-3 py-2 text-sm text-gray-text hover:text-primary transition-colors"
+                            >
+                              <div className="flex items-center gap-3">
+                                <i className={`${child.icon} text-primary/60 w-4 text-xs`}></i>
+                                {child.label}
+                              </div>
+                              <svg
+                                className={`w-3 h-3 transition-transform duration-200 ${expandedSubItems[child.path] ? 'rotate-180' : ''}`}
+                                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                              </svg>
+                            </button>
+                            {expandedSubItems[child.path] && (
+                              <div className="pl-6 space-y-1">
+                                {child.children.map((subChild) => (
+                                  <Link
+                                    key={subChild.path}
+                                    to={subChild.path}
+                                    onClick={onClose}
+                                    className="flex items-center gap-3 px-3 py-2 text-xs text-gray-text hover:text-primary transition-colors"
+                                  >
+                                    <i className={`${subChild.icon} text-primary/60 w-3 text-xs`}></i>
+                                    {subChild.label}
+                                  </Link>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+
+          <Link
+            to="/quote"
+            onClick={onClose}
+            className="block mt-6 text-center text-white px-5 py-3 rounded-full text-sm font-medium btn-gradient"
+          >
+            Get Quote
+          </Link>
+        </div>
+      </div>
+    </>
+  );
+}
+
+export default function Navbar() {
+  const headerRef = useRef(null);
+  const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState(null);
+  const dropdownTimeoutRef = useRef(null);
+
+  useNavbarScroll(headerRef);
+
+  const closeMobile = useCallback(() => setMobileMenuOpen(false), []);
+
+  const isActive = (key) => {
+    if (key === 'home') return location.pathname === '/';
+    if (key === 'services') return location.pathname.startsWith('/services');
+    if (key === 'projects') return location.pathname === '/projects';
+    if (key === 'about') return location.pathname === '/about';
+    return false;
+  };
+
+  const handleDropdownEnter = (key) => {
+    clearTimeout(dropdownTimeoutRef.current);
+    setOpenDropdown(key);
+  };
+
+  const handleDropdownLeave = () => {
+    dropdownTimeoutRef.current = setTimeout(() => setOpenDropdown(null), 150);
+  };
+
+  return (
+    <>
+      <header ref={headerRef} className="sticky top-0 z-50 border-b">
+        <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-20">
+            {/* Logo */}
+            <Link to="/" className="flex items-center">
+              <img src={config.company.logo.main} alt={config.company.logo.alt} className="h-14 w-auto" />
+            </Link>
+
+            {/* Desktop Navigation Links */}
+            <div className="hidden md:flex items-center space-x-8">
+              {navigationLinks.map((link) => {
+                if (!link.children) {
+                  return (
+                    <Link
+                      key={link.key}
+                      to={link.path}
+                      className={`text-base font-medium transition-colors ${
+                        isActive(link.key) ? 'text-primary' : 'text-dark-text hover:text-primary'
+                      }`}
+                    >
+                      {link.label}
+                    </Link>
+                  );
+                }
+
+                return (
+                  <div
+                    key={link.key}
+                    className="relative"
+                    onMouseEnter={() => handleDropdownEnter(link.key)}
+                    onMouseLeave={handleDropdownLeave}
+                  >
+                    <Link
+                      to={link.path}
+                      className={`text-base font-medium transition-colors flex items-center gap-1 ${
+                        isActive(link.key) ? 'text-primary' : 'text-dark-text hover:text-primary'
+                      }`}
+                    >
+                      {link.label}
+                      <svg
+                        className={`w-4 h-4 transition-transform duration-200 ${openDropdown === link.key ? 'rotate-180' : ''}`}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                      </svg>
+                    </Link>
+
+                    {/* Dropdown */}
+                    <div
+                      className={`absolute top-full left-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 transition-all duration-300 ease-in-out z-50 ${
+                        openDropdown === link.key
+                          ? 'opacity-100 visible translate-y-0'
+                          : 'opacity-0 invisible translate-y-2'
+                      }`}
+                    >
+                      <NavDropdown item={link} onClose={() => setOpenDropdown(null)} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Get Quote Button (Desktop) */}
+            <Link
+              to="/quote"
+              className="hidden md:inline-block text-white px-5 py-2 rounded-full text-sm font-medium transition-all hover:shadow-lg"
+              style={{ background: 'linear-gradient(90deg, #b8e4f7 0%, #0ea5e9 50%, #0369a1 100%)' }}
+            >
+              Get Quote
+            </Link>
+
+            {/* Mobile Menu Button */}
+            <button
+              className="md:hidden text-dark-text"
+              onClick={() => setMobileMenuOpen(true)}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
+              </svg>
+            </button>
+          </div>
+        </nav>
+      </header>
+
+      <MobileMenu isOpen={mobileMenuOpen} onClose={closeMobile} />
+    </>
+  );
+}
