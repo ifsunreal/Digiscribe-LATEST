@@ -6,9 +6,9 @@ export const navigationLinks = [
     path: "/projects",
     key: "projects",
     children: [
-      { label: "App Marketplace", path: "/projects", icon: "fas fa-store" },
-      { label: "Patient Fusion", path: "/projects", icon: "fas fa-user-injured" },
-      { label: "Practice Fusion", path: "/projects", icon: "fas fa-clinic-medical" },
+      { label: "App Marketplace", path: "/projects#app-marketplace", icon: "fas fa-store" },
+      { label: "Patient Fusion", path: "/projects#patient-fusion", icon: "fas fa-user-injured" },
+      { label: "Practice Fusion", path: "/projects#practice-fusion", icon: "fas fa-clinic-medical" },
     ],
   },
   {

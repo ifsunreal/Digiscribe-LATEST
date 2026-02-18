@@ -1,0 +1,125 @@
+import { execFile } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+
+// Domains where a plain HTTP fetch returns HTML, not the actual media.
+// For these we try yt-dlp first.
+const VIDEO_PLATFORM_PATTERNS = [
+  'youtube.com', 'youtu.be',
+  'vimeo.com',
+  'dailymotion.com', 'dai.ly',
+  'streamable.com',
+  'facebook.com', 'fb.watch',
+  'twitter.com', 'x.com',
+  'instagram.com',
+  'tiktok.com', 'vm.tiktok.com',
+  'twitch.tv',
+  'soundcloud.com',
+  'bandcamp.com',
+];
+
+// Ensure deno and node (needed by yt-dlp for YouTube JS extraction) are on PATH
+const denoDir = path.join(os.homedir(), '.deno', 'bin');
+const execEnv = { ...process.env };
+if (!execEnv.PATH?.includes(denoDir)) {
+  execEnv.PATH = `${denoDir}:${execEnv.PATH || ''}`;
+}
+
+/**
+ * Returns true if the URL belongs to a video/audio platform
+ * that requires yt-dlp to extract the actual media stream.
+ */
+export function isVideoPlatformUrl(url) {
+  try {
+    const hostname = new URL(url).hostname.replace('www.', '');
+    return VIDEO_PLATFORM_PATTERNS.some((domain) => hostname.includes(domain));
+  } catch {
+    return false;
+  }
+}
+
+// Resolve cookies file path (for YouTube bot-detection bypass)
+const cookiesFile = process.env.YTDLP_COOKIES_FILE
+  ? path.resolve(process.env.YTDLP_COOKIES_FILE)
+  : null;
+
+/**
+ * Downloads media from a video platform URL using yt-dlp.
+ *
+ * @param {string} url - The platform URL (e.g. Dailymotion page)
+ * @param {string} outputDir - Directory to save the downloaded file
+ * @returns {Promise<{filePath: string, fileName: string, mimeType: string}>}
+ */
+export function downloadWithYtdlp(url, outputDir) {
+  return new Promise((resolve, reject) => {
+    // Template: timestamp-%(title)s.%(ext)s
+    const template = path.join(outputDir, `${Date.now()}-%(title).80B.%(ext)s`);
+
+    const args = [
+      url,
+      '-f', 'bv*+ba/b',           // best video+audio, or best single stream
+      '--merge-output-format', 'mp4',  // merge into mp4 container
+      '--no-playlist',              // single video only
+      '--force-overwrites',         // timestamp prefix already ensures uniqueness; skip logic breaks --print
+      '--restrict-filenames',       // safe filenames
+      '-o', template,
+      '--print', '%(title)s',            // print clean video title (printed first by yt-dlp)
+      '--print', 'after_move:filepath',  // print final path to stdout (printed second)
+      '--no-simulate',
+      '--js-runtimes', 'deno', '--js-runtimes', 'node',  // use deno or node for JS extraction
+    ];
+
+    // Pass cookies file if configured (required for YouTube on server/datacenter IPs)
+    if (cookiesFile && fs.existsSync(cookiesFile)) {
+      args.push('--cookies', cookiesFile);
+    }
+
+    execFile('yt-dlp', args, { timeout: 300_000, maxBuffer: 10 * 1024 * 1024, env: execEnv }, (err, stdout, stderr) => {
+      if (err) {
+        // Extract a user-friendly message from yt-dlp stderr
+        const combined = stderr || err.message;
+        if (combined.includes('Sign in to confirm') || combined.includes('bot')) {
+          const hasCookies = cookiesFile && fs.existsSync(cookiesFile);
+          const msg = hasCookies
+            ? 'YouTube blocked this download despite cookies being provided. The cookies may be expired — re-export them from your browser and replace the cookies file.'
+            : 'YouTube requires authentication from this server. Set the YTDLP_COOKIES_FILE environment variable to a Netscape-format cookies.txt exported from your browser (see https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp).';
+          return reject(new Error(msg));
+        }
+        const errorLines = combined.split('\n');
+        const errorLine = errorLines.find((l) => l.startsWith('ERROR:')) || errorLines[errorLines.length - 1];
+        const cleanMsg = errorLine?.replace(/^ERROR:\s*(\[.*?\]\s*)?/, '').trim() || err.message;
+        return reject(new Error(cleanMsg));
+      }
+
+      const lines = stdout.trim().split('\n');
+      // yt-dlp prints title first, then filepath (after_move fires after metadata)
+      const title = lines.length >= 2 ? lines[lines.length - 2] : null;
+      const filePath = lines[lines.length - 1];
+
+      if (!filePath || !fs.existsSync(filePath)) {
+        return reject(new Error('yt-dlp did not produce an output file.'));
+      }
+
+      const fileName = path.basename(filePath);
+      const ext = path.extname(fileName).toLowerCase();
+
+      // Build a clean display name from the video title
+      const cleanTitle = title ? title.trim() : fileName.replace(/^\d+-/, '');
+      const originalName = cleanTitle.endsWith(ext) ? cleanTitle : `${cleanTitle}${ext}`;
+
+      // Map extension to MIME
+      const mimeMap = {
+        '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+        '.mov': 'video/quicktime', '.avi': 'video/x-msvideo', '.flv': 'video/x-flv',
+        '.m4v': 'video/mp4', '.3gp': 'video/3gpp', '.ts': 'video/mp2t',
+        '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg', '.opus': 'audio/opus', '.flac': 'audio/flac',
+        '.aac': 'audio/aac', '.wma': 'audio/x-ms-wma',
+      };
+      const mimeType = mimeMap[ext] || 'video/mp4';
+
+      resolve({ filePath, fileName, originalName, mimeType });
+    });
+  });
+}

@@ -1,22 +1,11 @@
-import { useState, useRef, useCallback } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { config } from '../../data/config';
 import { navigationLinks } from '../../data/navigation';
 import { useNavbarScroll } from '../../hooks/useNavbarScroll';
+import { useAuth } from '../../contexts/AuthContext';
 
-function NestedDropdownItem({ item, onClose }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const timeoutRef = useRef(null);
-
-  const handleMouseEnter = () => {
-    clearTimeout(timeoutRef.current);
-    setIsOpen(true);
-  };
-
-  const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => setIsOpen(false), 150);
-  };
-
+function NestedDropdownItem({ item, onClose, isOpen, onMouseEnter, onMouseLeave }) {
   if (!item.children) {
     return (
       <Link
@@ -31,7 +20,7 @@ function NestedDropdownItem({ item, onClose }) {
   }
 
   return (
-    <div className="relative" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+    <div className="relative" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       <Link
         to={item.path}
         onClick={onClose}
@@ -47,34 +36,141 @@ function NestedDropdownItem({ item, onClose }) {
       </Link>
       {/* Nested dropdown */}
       <div
-        className={`absolute left-full top-0 ml-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 transition-all duration-300 ease-in-out z-[60] ${
-          isOpen ? 'opacity-100 visible translate-x-0' : 'opacity-0 invisible translate-x-2'
+        className={`absolute left-full top-0 pl-2 z-[60] ${
+          isOpen ? '' : 'pointer-events-none'
         }`}
       >
-        <div className="py-2">
-          {item.children.map((child) => (
-            <Link
-              key={child.path}
-              to={child.path}
-              onClick={onClose}
-              className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-text hover:text-primary hover:bg-gray-50 transition-colors"
-            >
-              <i className={`${child.icon} text-primary/60 w-4`}></i>
-              {child.label}
-            </Link>
-          ))}
+        <div className={`w-56 bg-white rounded-xl shadow-lg border border-gray-100 ${
+          isOpen
+            ? 'opacity-100 visible translate-x-0 transition-all duration-200 ease-in-out'
+            : 'opacity-0 invisible translate-x-2'
+        }`}>
+          <div className="py-2">
+            {item.children.map((child) => (
+              <Link
+                key={child.path}
+                to={child.path}
+                onClick={onClose}
+                className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-text hover:text-primary hover:bg-gray-50 transition-colors"
+              >
+                <i className={`${child.icon} text-primary/60 w-4`}></i>
+                {child.label}
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function NavDropdown({ item, onClose }) {
+function NavDropdown({ item, onClose, isVisible }) {
+  const [openChild, setOpenChild] = useState(null);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!isVisible) {
+      setOpenChild(null);
+      clearTimeout(timeoutRef.current);
+    }
+  }, [isVisible]);
+
+  const handleChildEnter = (path) => {
+    clearTimeout(timeoutRef.current);
+    setOpenChild(path);
+  };
+
+  const handleChildLeave = () => {
+    timeoutRef.current = setTimeout(() => setOpenChild(null), 150);
+  };
+
   return (
     <div className="py-2">
       {item.children.map((child) => (
-        <NestedDropdownItem key={child.path} item={child} onClose={onClose} />
+        <NestedDropdownItem
+          key={child.path}
+          item={child}
+          onClose={onClose}
+          isOpen={openChild === child.path}
+          onMouseEnter={() => handleChildEnter(child.path)}
+          onMouseLeave={handleChildLeave}
+        />
       ))}
+    </div>
+  );
+}
+
+function UserDropdown({ onClose }) {
+  const { user, isAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    setOpen(false);
+    navigate('/');
+  };
+
+  const displayEmail = user?.email?.length > 20 ? user.email.slice(0, 18) + '...' : user?.email;
+
+  const dashboardPath = isAdmin ? '/admin/dashboard' : '/dashboard';
+  const dashboardLabel = isAdmin ? 'Admin Dashboard' : 'Dashboard';
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="hidden md:flex items-center gap-2 text-sm font-medium text-dark-text hover:text-primary transition-colors px-3 py-2 rounded-full border border-gray-200 hover:border-primary/30"
+      >
+        <i className="fas fa-user-circle text-primary"></i>
+        <span className="max-w-[140px] truncate">{displayEmail}</span>
+        <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+        </svg>
+      </button>
+
+      <div className={`absolute top-full right-0 pt-2 z-50 ${open ? '' : 'pointer-events-none'}`}>
+        <div className={`w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 ${
+          open
+            ? 'opacity-100 visible translate-y-0 transition-all duration-200 ease-in-out'
+            : 'opacity-0 invisible translate-y-2'
+        }`}>
+          {/* Role badge */}
+          <div className="px-4 py-2 border-b border-gray-100 mb-1">
+            <p className="text-[11px] text-gray-400 uppercase tracking-wide font-medium">
+              {isAdmin ? 'Admin' : 'User'}
+            </p>
+          </div>
+
+          <Link
+            to={dashboardPath}
+            onClick={() => { setOpen(false); onClose?.(); }}
+            className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-text hover:text-primary hover:bg-gray-50 transition-colors"
+          >
+            <i className="fas fa-tachometer-alt text-primary/60 w-4"></i>
+            {dashboardLabel}
+          </Link>
+          <div className="border-t border-gray-100 my-1"></div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-text hover:text-red-500 hover:bg-red-50 transition-colors w-full text-left"
+          >
+            <i className="fas fa-sign-out-alt text-gray-400 w-4"></i>
+            Sign Out
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -82,6 +178,8 @@ function NavDropdown({ item, onClose }) {
 function MobileMenu({ isOpen, onClose }) {
   const [expandedItems, setExpandedItems] = useState({});
   const [expandedSubItems, setExpandedSubItems] = useState({});
+  const { user, isAdmin, logout } = useAuth();
+  const navigate = useNavigate();
 
   const toggleExpand = (key) => {
     setExpandedItems((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -89,6 +187,12 @@ function MobileMenu({ isOpen, onClose }) {
 
   const toggleSubExpand = (key) => {
     setExpandedSubItems((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    onClose();
+    navigate('/');
   };
 
   return (
@@ -202,15 +306,72 @@ function MobileMenu({ isOpen, onClose }) {
                 </div>
               );
             })}
+
+            {/* Auth-dependent mobile links */}
+            {user && (
+              <>
+                <Link
+                  to="/upload"
+                  onClick={onClose}
+                  className="block px-3 py-3 text-base font-medium text-dark-text hover:text-primary transition-colors"
+                >
+                  <i className="fas fa-cloud-upload-alt text-primary/60 mr-2"></i>
+                  Upload
+                </Link>
+                {isAdmin ? (
+                  <Link
+                    to="/admin/dashboard"
+                    onClick={onClose}
+                    className="block px-3 py-3 text-base font-medium text-dark-text hover:text-primary transition-colors"
+                  >
+                    <i className="fas fa-tachometer-alt text-primary/60 mr-2"></i>
+                    Admin Dashboard
+                  </Link>
+                ) : (
+                  <Link
+                    to="/dashboard"
+                    onClick={onClose}
+                    className="block px-3 py-3 text-base font-medium text-dark-text hover:text-primary transition-colors"
+                  >
+                    <i className="fas fa-tachometer-alt text-primary/60 mr-2"></i>
+                    Dashboard
+                  </Link>
+                )}
+              </>
+            )}
           </nav>
 
-          <Link
-            to="/quote"
-            onClick={onClose}
-            className="block mt-6 text-center text-white px-5 py-3 rounded-full text-sm font-medium btn-gradient"
-          >
-            Get Quote
-          </Link>
+          <div className="mt-6 space-y-3">
+            {user ? (
+              <>
+                <div className="px-3 py-2 text-xs text-gray-text truncate">
+                  <i className="fas fa-user-circle text-primary mr-1.5"></i>
+                  {user.email}
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="block w-full text-center text-white px-5 py-3 rounded-full text-sm font-medium bg-red-500 hover:bg-red-600 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <Link
+                to="/login"
+                onClick={onClose}
+                className="block text-center text-primary border border-primary px-5 py-3 rounded-full text-sm font-medium hover:bg-primary hover:text-white transition-colors"
+              >
+                Login
+              </Link>
+            )}
+            <Link
+              to="/quote"
+              onClick={onClose}
+              className="block text-center text-white px-5 py-3 rounded-full text-sm font-medium btn-gradient"
+            >
+              Get Quote
+            </Link>
+          </div>
         </div>
       </div>
     </>
@@ -223,6 +384,7 @@ export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(null);
   const dropdownTimeoutRef = useRef(null);
+  const { user } = useAuth();
 
   useNavbarScroll(headerRef);
 
@@ -233,6 +395,8 @@ export default function Navbar() {
     if (key === 'services') return location.pathname.startsWith('/services');
     if (key === 'projects') return location.pathname === '/projects';
     if (key === 'about') return location.pathname === '/about';
+    if (key === 'upload') return location.pathname === '/upload';
+    if (key === 'dashboard') return location.pathname === '/dashboard';
     return false;
   };
 
@@ -296,27 +460,56 @@ export default function Navbar() {
 
                     {/* Dropdown */}
                     <div
-                      className={`absolute top-full left-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 transition-all duration-300 ease-in-out z-50 ${
-                        openDropdown === link.key
-                          ? 'opacity-100 visible translate-y-0'
-                          : 'opacity-0 invisible translate-y-2'
+                      className={`absolute top-full left-0 pt-2 z-50 ${
+                        openDropdown === link.key ? '' : 'pointer-events-none'
                       }`}
                     >
-                      <NavDropdown item={link} onClose={() => setOpenDropdown(null)} />
+                      <div className={`w-56 bg-white rounded-xl shadow-lg border border-gray-100 ${
+                        openDropdown === link.key
+                          ? 'opacity-100 visible translate-y-0 transition-all duration-200 ease-in-out'
+                          : 'opacity-0 invisible translate-y-2'
+                      }`}>
+                        <NavDropdown item={link} onClose={() => setOpenDropdown(null)} isVisible={openDropdown === link.key} />
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Get Quote Button (Desktop) */}
-            <Link
-              to="/quote"
-              className="hidden md:inline-block text-white px-5 py-2 rounded-full text-sm font-medium transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(90deg, #b8e4f7 0%, #0ea5e9 50%, #0369a1 100%)' }}
-            >
-              Get Quote
-            </Link>
+            {/* Right side buttons */}
+            <div className="hidden md:flex items-center gap-3">
+              {user && (
+                <Link
+                  to="/upload"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                    location.pathname === '/upload'
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-dark-text hover:text-primary hover:bg-primary/5'
+                  }`}
+                >
+                  <i className="fas fa-cloud-upload-alt text-sm"></i>
+                  Upload
+                </Link>
+              )}
+              {user ? (
+                <UserDropdown />
+              ) : (
+                <Link
+                  to="/login"
+                  className="text-primary border border-primary px-5 py-2 rounded-full text-sm font-medium transition-all hover:bg-primary hover:text-white"
+                >
+                  Login
+                </Link>
+              )}
+              <Link
+                to="/quote"
+                className="text-white px-5 py-2 rounded-full text-sm font-medium transition-all hover:shadow-lg"
+                style={{ background: 'linear-gradient(90deg, #b8e4f7 0%, #0ea5e9 50%, #0369a1 100%)' }}
+              >
+                Get Quote
+              </Link>
+            </div>
 
             {/* Mobile Menu Button */}
             <button
