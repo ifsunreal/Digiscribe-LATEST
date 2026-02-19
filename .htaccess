@@ -1,11 +1,6 @@
 # Route /api/* → PHP reverse-proxy → Node.js on port 25264
 # SPA fallback → index.html for React Router
 
-# Tell Passenger to use the shim instead of the bare NVM binary.
-# The shim sources NVM and locates the correct node binary at runtime,
-# avoiding "Can't execute /home/.nvm/.../bin/node" errors on cPanel hosts.
-PassengerNodejs /home/www/devteam2026/node_shim.sh
-
 <IfModule mod_rewrite.c>
   RewriteEngine On
 
