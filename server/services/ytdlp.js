@@ -19,11 +19,13 @@ const VIDEO_PLATFORM_PATTERNS = [
   'bandcamp.com',
 ];
 
-// Ensure deno and node (needed by yt-dlp for YouTube JS extraction) are on PATH
+// Ensure deno, node, and pip-installed binaries (e.g. ~/.local/bin) are on PATH
 const denoDir = path.join(os.homedir(), '.deno', 'bin');
+const localBin = path.join(os.homedir(), '.local', 'bin');
 const execEnv = { ...process.env };
-if (!execEnv.PATH?.includes(denoDir)) {
-  execEnv.PATH = `${denoDir}:${execEnv.PATH || ''}`;
+const extraPaths = [denoDir, localBin].filter((p) => !execEnv.PATH?.includes(p));
+if (extraPaths.length) {
+  execEnv.PATH = `${extraPaths.join(':')}:${execEnv.PATH || ''}`;
 }
 
 /**

@@ -211,11 +211,47 @@ app.post('/api/upload/url', verifyAuth, async (req, res) => {
 
     // For video platforms, use yt-dlp to extract the actual media
     if (isVideoPlatformUrl(url)) {
-      const result = await downloadWithYtdlp(url, chunksDir);
-      finalPath = result.filePath;
-      finalName = result.fileName;
-      contentType = result.mimeType;
-      originalName = result.originalName;
+      try {
+        const result = await downloadWithYtdlp(url, chunksDir);
+        finalPath = result.filePath;
+        finalName = result.fileName;
+        contentType = result.mimeType;
+        originalName = result.originalName;
+      } catch (ytErr) {
+        // yt-dlp unavailable or download failed — save as embed-only entry so the
+        // frontend can display an inline player instead of a downloadable file.
+        console.warn('[upload/url] yt-dlp failed, falling back to embed:', ytErr.message);
+        const displayName = customName?.trim() || url;
+        let fileId = null;
+        if (adminDb) {
+          const docRef = await adminDb.collection('files').add({
+            originalName: displayName,
+            savedAs: null,
+            storagePath: null,
+            size: 0,
+            type: null,
+            fileCategory: 'Video',
+            uploadedBy: req.user.uid,
+            uploadedByEmail: req.user.email || '',
+            uploadedAt: new Date(),
+            status: 'pending',
+            description: description || '',
+            serviceCategory: serviceCategory || '',
+            sourceType: 'url',
+            sourceUrl: url,
+            folderId: folderId || null,
+            url: null,
+          });
+          fileId = docRef.id;
+        }
+        return res.json({
+          success: true,
+          embedded: true,
+          message: `Saved as embedded link — direct download unavailable.`,
+          file: { originalName: displayName, savedAs: null, size: 0, type: null },
+          fileId,
+        });
+      }
     } else {
       // Direct URL — just fetch normally
       const fetched = await fetchUrlDirect(url, chunksDir);
