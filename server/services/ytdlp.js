@@ -41,10 +41,27 @@ export function isVideoPlatformUrl(url) {
   }
 }
 
-// Resolve cookies file path (for YouTube bot-detection bypass)
-const cookiesFile = process.env.YTDLP_COOKIES_FILE
-  ? path.resolve(process.env.YTDLP_COOKIES_FILE)
-  : null;
+// Resolve cookies file path (for YouTube bot-detection bypass).
+// Supports two formats for YTDLP_COOKIES_FILE:
+//   1. A file path (no newlines) – used as-is
+//   2. The full Netscape cookie file content pasted directly into the env var –
+//      written to a temp file so yt-dlp can read it.
+let cookiesFile = null;
+const _cookiesEnv = process.env.YTDLP_COOKIES_FILE;
+if (_cookiesEnv) {
+  if (_cookiesEnv.includes('\n') || _cookiesEnv.startsWith('# Netscape')) {
+    // Env var contains the raw cookie content – write it to a temp file once
+    const tmpCookies = path.join(os.tmpdir(), 'ytdlp_cookies.txt');
+    try {
+      fs.writeFileSync(tmpCookies, _cookiesEnv, 'utf8');
+      cookiesFile = tmpCookies;
+    } catch (e) {
+      console.warn('[ytdlp] Failed to write cookies temp file:', e.message);
+    }
+  } else {
+    cookiesFile = path.resolve(_cookiesEnv);
+  }
+}
 
 /**
  * Downloads media from a video platform URL using yt-dlp.

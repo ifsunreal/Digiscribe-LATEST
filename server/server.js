@@ -41,15 +41,34 @@ const allowedOrigins = [
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
-// Accept any image/*, audio/*, video/* MIME type
-function isAllowedMime(mime) {
-  return mime && (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/'));
+// Accept any image/*, audio/*, video/* MIME type.
+// Admins can also upload document types (PDF, Word, etc.)
+function isAllowedMime(mime, role) {
+  if (!mime) return false;
+  if (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/')) return true;
+  if (role === 'admin') {
+    const docTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'text/csv',
+    ];
+    return docTypes.includes(mime);
+  }
+  return false;
 }
 
 function getFileCategory(mimeType) {
   if (mimeType?.startsWith('video/')) return 'Video';
   if (mimeType?.startsWith('audio/')) return 'Audio';
   if (mimeType?.startsWith('image/')) return 'Image';
+  if (mimeType === 'application/pdf') return 'PDF';
+  if (mimeType?.startsWith('application/')) return 'Document';
   return 'Other';
 }
 
@@ -79,6 +98,15 @@ const EXT_TO_MIME = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
   '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska',
   '.wmv': 'video/x-ms-wmv', '.m4v': 'video/mp4',
+  // Documents (admin uploads)
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.txt': 'text/plain', '.csv': 'text/csv',
 };
 
 // Multer for chunk uploads
@@ -117,7 +145,7 @@ app.post('/api/upload/complete', verifyAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required fields.' });
     }
 
-    if (!isAllowedMime(mimeType)) {
+    if (!isAllowedMime(mimeType, req.user.role)) {
       return res.status(400).json({ success: false, error: `File type "${mimeType}" is not allowed.` });
     }
 
@@ -418,6 +446,115 @@ app.post('/api/files/bulk-delete', verifyAdmin, async (req, res) => {
     res.json({ success: true, deleted });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/files/bulk-move - Move multiple files to a folder (auth required)
+app.post('/api/files/bulk-move', verifyAuth, async (req, res) => {
+  const { fileIds, folderId } = req.body;
+  if (!Array.isArray(fileIds) || fileIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'fileIds array is required.' });
+  }
+  try {
+    // If folderId specified, verify folder exists
+    if (folderId) {
+      const folderDoc = await adminDb.collection('folders').doc(folderId).get();
+      if (!folderDoc.exists) {
+        return res.status(404).json({ success: false, error: 'Folder not found.' });
+      }
+    }
+    let moved = 0;
+    for (const id of fileIds) {
+      const docRef = adminDb.collection('files').doc(id);
+      const doc = await docRef.get();
+      if (!doc.exists) continue;
+      const fileData = doc.data();
+      // Non-admins can only move their own files
+      if (req.user.role !== 'admin' && fileData.uploadedBy !== req.user.uid) continue;
+      await docRef.update({ folderId: folderId || null, updatedAt: new Date() });
+      moved++;
+    }
+    res.json({ success: true, moved });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/files/bulk-status - Bulk change status (admin only)
+app.post('/api/files/bulk-status', verifyAdmin, async (req, res) => {
+  const { fileIds, status } = req.body;
+  const validStatuses = ['pending', 'in-progress', 'transcribed'];
+  if (!Array.isArray(fileIds) || fileIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'fileIds array is required.' });
+  }
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ success: false, error: `Invalid status.` });
+  }
+  try {
+    let updated = 0;
+    for (const id of fileIds) {
+      const docRef = adminDb.collection('files').doc(id);
+      const doc = await docRef.get();
+      if (!doc.exists) continue;
+      await docRef.update({ status, updatedAt: new Date() });
+      updated++;
+    }
+    res.json({ success: true, updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/files/download-folder/:folderId - Download entire folder as ZIP (auth required)
+app.post('/api/files/download-folder/:folderId', verifyAuth, async (req, res) => {
+  const { folderId } = req.params;
+  try {
+    // Get all files in this folder (and optionally subfolders)
+    let query = adminDb.collection('files').where('folderId', '==', folderId);
+    if (req.user.role !== 'admin') {
+      query = query.where('uploadedBy', '==', req.user.uid);
+    }
+    const snapshot = await query.get();
+    const files = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    if (files.length === 0) {
+      return res.status(404).json({ success: false, error: 'No files in this folder.' });
+    }
+
+    // Get folder name for zip filename
+    const folderDoc = await adminDb.collection('folders').doc(folderId).get();
+    const folderName = folderDoc.exists ? (folderDoc.data().name || 'folder') : 'folder';
+    const safeFolderName = folderName.replace(/[^a-z0-9_\-]/gi, '_');
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFolderName}-${Date.now()}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 5 } });
+    archive.on('error', (err) => { if (!res.headersSent) res.status(500).json({ success: false, error: err.message }); });
+    archive.pipe(res);
+
+    const tempFiles = [];
+    for (const file of files) {
+      if (!file.storagePath && !file.savedAs) continue;
+      const remotePath = file.storagePath || file.savedAs;
+      const tmpFile = path.join(chunksDir, `folderdl-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      try {
+        await downloadFromFtp(remotePath, tmpFile);
+        archive.file(tmpFile, { name: file.originalName || path.basename(remotePath) });
+        tempFiles.push(tmpFile);
+      } catch (dlErr) {
+        console.warn('[folder-download] Could not download:', remotePath, dlErr.message);
+      }
+    }
+
+    await archive.finalize();
+    for (const tmp of tempFiles) {
+      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    }
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   }
 });
 

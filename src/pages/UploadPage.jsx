@@ -7,7 +7,9 @@ import { useAuth } from '../contexts/AuthContext';
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
-const ACCEPT_STRING = 'image/*,audio/*,video/*';
+const ACCEPT_MEDIA = 'image/*,audio/*,video/*';
+const ACCEPT_DOCS = 'application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv';
+const ACCEPT_STRING = ACCEPT_MEDIA; // default; admins get ACCEPT_MEDIA + ACCEPT_DOCS
 const MAX_FILES = 10;
 const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB per chunk
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -53,8 +55,20 @@ const SERVICE_CATEGORIES = [
 /* ------------------------------------------------------------------ */
 /*  Utility helpers                                                    */
 /* ------------------------------------------------------------------ */
-function isAllowedMime(mime) {
-  return mime && (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/'));
+function isAllowedMime(mime, role) {
+  if (!mime) return false;
+  if (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/')) return true;
+  if (role === 'admin') {
+    const docTypes = [
+      'application/pdf', 'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain', 'text/csv',
+    ];
+    return docTypes.includes(mime);
+  }
+  return false;
 }
 
 function formatSize(bytes) {
@@ -343,8 +357,9 @@ export default function UploadPage() {
     }
 
     for (const file of fileList) {
-      if (!isAllowedMime(file.type)) {
-        errors.push(`"${file.name}" is not a supported file type. Accepted: images, audio, and video files only.`);
+      if (!isAllowedMime(file.type, role)) {
+        const accepted = role === 'admin' ? 'images, audio, video, PDF, and documents' : 'images, audio, and video files only';
+        errors.push(`"${file.name}" is not a supported file type. Accepted: ${accepted}.`);
       } else {
         valid.push(file);
       }
@@ -658,7 +673,7 @@ export default function UploadPage() {
           </div>
           <h3 className="text-base font-semibold text-dark-text mb-2">Direct File Upload</h3>
           <p className="text-xs text-gray-text leading-relaxed">
-            Drag and drop or browse files from your device. Supports images, audio, and video.
+            Drag and drop or browse files from your device. Supports images, audio, and video{role === 'admin' ? ', plus PDF & documents for documentation' : ''}.
           </p>
         </button>
 
@@ -694,7 +709,7 @@ export default function UploadPage() {
       <div className="text-center mb-6">
         <h2 className="text-lg font-semibold text-dark-text">Select Your Files</h2>
         <p className="text-sm text-gray-text mt-1">
-          Upload up to {MAX_FILES} image, audio, or video files
+          Upload up to {MAX_FILES} {role === 'admin' ? 'media or document' : 'image, audio, or video'} files
         </p>
       </div>
 
@@ -710,6 +725,9 @@ export default function UploadPage() {
               <li><i className="fas fa-check text-primary mr-2"></i><strong>Images:</strong> JPG, PNG, GIF, WebP, BMP, SVG, HEIC, AVIF, JFIF, etc.</li>
               <li><i className="fas fa-check text-primary mr-2"></i><strong>Audio:</strong> MP3, WAV, OGG, AAC, FLAC, M4A, OPUS, AIFF, etc.</li>
               <li><i className="fas fa-check text-primary mr-2"></i><strong>Video:</strong> MP4, WebM, MOV, AVI, MKV, WMV, FLV, etc.</li>
+              {role === 'admin' && (
+                <li><i className="fas fa-check text-primary mr-2"></i><strong>Documents (admin):</strong> PDF, DOC/DOCX, XLS/XLSX, TXT, CSV</li>
+              )}
             </ul>
           </div>
         </div>
@@ -732,7 +750,7 @@ export default function UploadPage() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept={ACCEPT_STRING}
+          accept={role === 'admin' ? `${ACCEPT_MEDIA},${ACCEPT_DOCS}` : ACCEPT_MEDIA}
           onChange={handleFileInput}
           className="hidden"
         />

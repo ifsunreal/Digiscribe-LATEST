@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 
 function formatSize(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || bytes === 0) return '--';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -9,27 +9,36 @@ function formatSize(bytes) {
 }
 
 function formatDate(dateString) {
-  if (!dateString) return 'Unknown';
+  if (!dateString) return '--';
   try {
     const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-    });
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    return `${mm}/${dd}/${yyyy}`;
   } catch {
-    return 'Unknown';
+    return '--';
+  }
+}
+
+const PLATFORM_MAP = [
+  { domains: ['youtube.com', 'youtu.be'], label: 'YouTube', icon: 'fa-youtube', color: 'text-red-600 bg-red-50 border-red-200' },
+  { domains: ['facebook.com', 'fb.watch'], label: 'Facebook', icon: 'fa-facebook', color: 'text-blue-700 bg-blue-50 border-blue-200' },
+  { domains: ['instagram.com'], label: 'Instagram', icon: 'fa-instagram', color: 'text-pink-600 bg-pink-50 border-pink-200' },
+  { domains: ['tiktok.com', 'vm.tiktok.com'], label: 'TikTok', icon: 'fa-tiktok', color: 'text-gray-800 bg-gray-50 border-gray-200' },
+  { domains: ['twitter.com', 'x.com'], label: 'Twitter/X', icon: 'fa-twitter', color: 'text-sky-500 bg-sky-50 border-sky-200' },
+  { domains: ['vimeo.com'], label: 'Vimeo', icon: 'fa-vimeo', color: 'text-cyan-600 bg-cyan-50 border-cyan-200' },
+  { domains: ['soundcloud.com'], label: 'SoundCloud', icon: 'fa-soundcloud', color: 'text-orange-500 bg-orange-50 border-orange-200' },
+  { domains: ['twitch.tv'], label: 'Twitch', icon: 'fa-twitch', color: 'text-purple-600 bg-purple-50 border-purple-200' },
+];
+
+function getUrlPlatform(sourceUrl) {
+  if (!sourceUrl) return null;
+  try {
+    const hostname = new URL(sourceUrl).hostname.replace('www.', '');
+    return PLATFORM_MAP.find((p) => p.domains.some((d) => hostname.includes(d))) || { label: 'URL', icon: 'fa-link', color: 'text-gray-500 bg-gray-50 border-gray-200' };
+  } catch {
+    return null;
   }
 }
 
@@ -38,6 +47,11 @@ function getFileIcon(type) {
   if (type.startsWith('image/')) return 'fa-image';
   if (type.startsWith('audio/')) return 'fa-music';
   if (type.startsWith('video/')) return 'fa-video';
+  if (type === 'application/pdf') return 'fa-file-pdf';
+  if (type.includes('word') || type === 'application/msword') return 'fa-file-word';
+  if (type.includes('excel') || type.includes('spreadsheet')) return 'fa-file-excel';
+  if (type.includes('powerpoint') || type.includes('presentation')) return 'fa-file-powerpoint';
+  if (type === 'text/plain' || type === 'text/csv') return 'fa-file-alt';
   return 'fa-file';
 }
 
@@ -46,6 +60,10 @@ function getFileIconColor(type) {
   if (type.startsWith('image/')) return 'text-violet-600 bg-violet-50';
   if (type.startsWith('audio/')) return 'text-sky-600 bg-sky-50';
   if (type.startsWith('video/')) return 'text-rose-500 bg-rose-50';
+  if (type === 'application/pdf') return 'text-red-600 bg-red-50';
+  if (type.includes('word') || type === 'application/msword') return 'text-blue-600 bg-blue-50';
+  if (type.includes('excel') || type.includes('spreadsheet')) return 'text-green-600 bg-green-50';
+  if (type.includes('powerpoint') || type.includes('presentation')) return 'text-orange-600 bg-orange-50';
   return 'text-gray-400 bg-gray-50';
 }
 
@@ -84,6 +102,8 @@ export default function FileCard({ file, isAdmin, onStatusChange, onPreview }) {
   const dropdownRef = useRef(null);
 
   const status = statusConfig[file.status] || statusConfig.pending;
+  const isUrl = file.sourceType === 'url';
+  const urlPlatform = isUrl ? getUrlPlatform(file.sourceUrl) : null;
   const icon = getFileIcon(file.type);
   const iconColor = getFileIconColor(file.type);
 
@@ -186,15 +206,21 @@ export default function FileCard({ file, isAdmin, onStatusChange, onPreview }) {
           </div>
         </div>
 
-        {/* Service Category */}
-        {file.serviceCategory && (
-          <div className="mb-2.5">
+        {/* Platform badge (URL uploads) + Service Category */}
+        <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+          {isUrl && urlPlatform && (
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${urlPlatform.color}`}>
+              <i className={`fab ${urlPlatform.icon} text-[9px]`}></i>
+              {urlPlatform.label}
+            </span>
+          )}
+          {file.serviceCategory && (
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-50 text-indigo-600 border border-indigo-100">
               <i className="fas fa-tag text-[8px] text-indigo-400"></i>
               {file.serviceCategory}
             </span>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Description */}
         {file.description && (
@@ -203,7 +229,7 @@ export default function FileCard({ file, isAdmin, onStatusChange, onPreview }) {
           </p>
         )}
 
-        {/* Footer: uploader info + preview */}
+        {/* Footer: uploader info + action */}
         <div className="flex items-center justify-between pt-3 border-t border-gray-50">
           <div className="flex items-center gap-2 text-[11px] text-gray-400 min-w-0">
             {isAdmin && file.uploadedByEmail ? (
@@ -213,20 +239,28 @@ export default function FileCard({ file, isAdmin, onStatusChange, onPreview }) {
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
-                <i className="fas fa-clock text-[9px] text-gray-300"></i>
+                <i className="fas fa-calendar text-[9px] text-gray-300"></i>
                 {formatDate(file.uploadedAt)}
               </span>
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={handlePreview}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-primary/5 transition-colors"
-          >
-            <i className="fas fa-eye text-[10px]"></i>
-            Preview
-          </button>
+          <div className="flex items-center gap-1.5">
+            {isUrl && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium bg-gray-50 text-gray-400 border border-gray-200" title="Downloaded from URL — cannot be re-downloaded">
+                <i className="fas fa-ban text-[9px]"></i>
+                No download
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handlePreview}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-gray-400 hover:text-primary hover:bg-primary/5 transition-colors"
+            >
+              <i className="fas fa-eye text-[10px]"></i>
+              Preview
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -45,6 +45,7 @@ export default function DashboardPage() {
   // Selection state
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMoveActive, setBulkMoveActive] = useState(false); // bulk move to folder
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState(null);
@@ -91,19 +92,19 @@ export default function DashboardPage() {
     return Array.from(cats).sort();
   }, [allFiles]);
 
-  // Files in current folder (or all files when searching)
+  // Files in current folder (or all files when searching/filtering)
   const currentFolderFiles = useMemo(() => {
-    if (searchQuery.trim()) return allFiles; // flatten when searching
+    if (searchQuery.trim() || statusFilter || serviceFilter) return allFiles; // flatten when searching or any filter active
     return allFiles.filter((f) => (f.folderId || null) === currentFolderId);
-  }, [allFiles, currentFolderId, searchQuery]);
+  }, [allFiles, currentFolderId, searchQuery, statusFilter, serviceFilter]);
 
   // Subfolders of current folder
   const currentSubfolders = useMemo(() => {
-    if (searchQuery.trim()) return []; // hide folders when searching
+    if (searchQuery.trim() || statusFilter || serviceFilter) return []; // hide folders when filtering
     return allFolders
       .filter((f) => (f.parentId || null) === currentFolderId)
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [allFolders, currentFolderId, searchQuery]);
+  }, [allFolders, currentFolderId, searchQuery, statusFilter, serviceFilter]);
 
   // Count items per folder (files + subfolders)
   const folderItemCounts = useMemo(() => {
@@ -128,10 +129,7 @@ export default function DashboardPage() {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       result = result.filter((f) =>
-        (f.originalName && f.originalName.toLowerCase().includes(q)) ||
-        (f.description && f.description.toLowerCase().includes(q)) ||
-        (f.serviceCategory && f.serviceCategory.toLowerCase().includes(q)) ||
-        (f.uploadedByEmail && f.uploadedByEmail.toLowerCase().includes(q))
+        f.originalName && f.originalName.toLowerCase().includes(q)
       );
     }
 
@@ -189,6 +187,78 @@ export default function DashboardPage() {
       return next;
     });
   };
+
+  // Ctrl+A → select all files in current view
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && activeTab === 'files') {
+        // Only intercept when not typing in an input
+        if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+        e.preventDefault();
+        if (filteredFiles.length > 0) {
+          setSelectedIds(new Set(filteredFiles.map((f) => f.id)));
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [activeTab, filteredFiles]);
+
+  // Bulk move to folder
+  const handleBulkMove = useCallback(async (targetFolderId) => {
+    const ids = [...selectedIds].filter((id) => filteredIds.has(id));
+    if (ids.length === 0) return;
+    setBulkLoading(true);
+    setMessage(null);
+    try {
+      const token = await getIdToken();
+      const res = await fetch('/api/files/bulk-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ fileIds: ids, folderId: targetFolderId || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Move failed.');
+      setMessage({ type: 'success', text: `Moved ${data.moved} file(s).` });
+      setSelectedIds(new Set());
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setBulkLoading(false);
+      setBulkMoveActive(false);
+      setTimeout(() => setMessage(null), 3000);
+    }
+  }, [selectedIds, filteredIds, getIdToken]);
+
+  // Folder download as ZIP
+  const handleFolderDownload = useCallback(async (folder) => {
+    setMessage(null);
+    try {
+      const token = await getIdToken();
+      const res = await fetch(`/api/files/download-folder/${folder.id}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Download failed.');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${folder.name || 'folder'}-${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMessage({ type: 'success', text: `Downloading folder "${folder.name}" as ZIP.` });
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setTimeout(() => setMessage(null), 3000);
+    }
+  }, [getIdToken]);
 
   // Bulk download as zip
   const handleBulkDownload = useCallback(async () => {
@@ -345,22 +415,29 @@ export default function DashboardPage() {
           setRenameValue(folder.name);
         }},
         { icon: 'fa-arrows-alt', label: 'Move to...', onClick: () => setMoveTarget({ type: 'folder', item: folder }) },
+        { icon: 'fa-file-archive', label: 'Download as ZIP', onClick: () => handleFolderDownload(folder) },
         { divider: true },
         { icon: 'fa-trash-alt', label: 'Delete Folder', danger: true, onClick: () => setDeleteFolderConfirm(folder.id) },
       ];
     }
 
     const file = contextMenu.file;
-    return [
+    const isUrl = file.sourceType === 'url';
+    const items = [
       { icon: 'fa-eye', label: 'Preview', onClick: () => setPreviewFile(file) },
-      { icon: 'fa-download', label: 'Download', onClick: () => {
-        const a = document.createElement('a');
-        a.href = fileUrl(file.url);
-        a.download = file.originalName;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }},
+      {
+        icon: 'fa-download',
+        label: 'Download',
+        disabled: isUrl,
+        onClick: isUrl ? () => {} : () => {
+          const a = document.createElement('a');
+          a.href = fileUrl(file.url);
+          a.download = file.originalName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        },
+      },
       { icon: 'fa-copy', label: 'Copy URL', shortcut: 'Ctrl+C', onClick: () => copyFileUrl(file) },
       { divider: true },
       { icon: 'fa-folder-open', label: 'Move to Folder...', onClick: () => setMoveTarget({ type: 'file', item: file }) },
@@ -368,7 +445,17 @@ export default function DashboardPage() {
       { divider: true },
       { icon: 'fa-info-circle', label: 'Properties', onClick: () => setPropertiesFile(file) },
     ];
-  }, [contextMenu, selectedIds, copyFileUrl]);
+
+    // When multiple files are selected, add bulk actions
+    const selCount = [...selectedIds].filter((id) => filteredIds.has(id)).length;
+    if (selCount > 1) {
+      items.push({ divider: true });
+      items.push({ icon: 'fa-arrows-alt', label: `Move ${selCount} Selected to Folder...`, onClick: () => setBulkMoveActive(true) });
+      items.push({ icon: 'fa-times-circle', label: 'Deselect All', onClick: () => setSelectedIds(new Set()) });
+    }
+
+    return items;
+  }, [contextMenu, selectedIds, filteredIds, copyFileUrl, handleFolderDownload]);
 
   const clearFilters = () => {
     setStatusFilter('');
@@ -502,7 +589,7 @@ export default function DashboardPage() {
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search files by name, description, or email..."
+                      placeholder="Search by file name..."
                       className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-dark-text placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
                     />
                     {searchQuery && (
@@ -578,7 +665,12 @@ export default function DashboardPage() {
                         Searching across all folders &middot; {filteredFiles.length} result{filteredFiles.length !== 1 ? 's' : ''}
                       </span>
                     )}
-                    {!isSearching && (
+                    {!isSearching && (statusFilter || serviceFilter) && (
+                      <span className="text-xs text-gray-400 ml-1">
+                        Showing across all folders &middot; {filteredFiles.length} result{filteredFiles.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {!isSearching && !statusFilter && !serviceFilter && (
                       <span className="text-xs text-gray-400 ml-1">
                         {filteredFiles.length} result{filteredFiles.length !== 1 ? 's' : ''}
                       </span>
@@ -608,6 +700,14 @@ export default function DashboardPage() {
                       Download ZIP
                     </button>
                     <button
+                      onClick={() => setBulkMoveActive(true)}
+                      disabled={bulkLoading}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                    >
+                      <i className="fas fa-folder-open text-[10px]"></i>
+                      Move to Folder
+                    </button>
+                    <button
                       onClick={() => setSelectedIds(new Set())}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-400 hover:text-dark-text hover:bg-gray-50 transition-colors"
                     >
@@ -633,6 +733,7 @@ export default function DashboardPage() {
                       className="w-3.5 h-3.5 rounded border-gray-300 text-primary pointer-events-none"
                     />
                     {allSelected ? 'Deselect All' : 'Select All'}
+                    <span className="text-gray-300 font-mono text-[9px]">Ctrl+A</span>
                   </button>
                   <span className="text-xs text-gray-400">
                     {currentSubfolders.length > 0 && `${currentSubfolders.length} folder${currentSubfolders.length !== 1 ? 's' : ''}, `}
@@ -938,6 +1039,18 @@ export default function DashboardPage() {
           folders={allFolders}
           excludeIds={moveTarget.type === 'folder' ? getDescendantIds(moveTarget.item.id) : []}
           title={moveTarget.type === 'file' ? `Move "${moveTarget.item.originalName}"` : `Move "${moveTarget.item.name}"`}
+        />
+      )}
+
+      {/* Bulk Move Modal */}
+      {bulkMoveActive && (
+        <MoveFolderModal
+          isOpen={true}
+          onClose={() => setBulkMoveActive(false)}
+          onSelect={handleBulkMove}
+          folders={allFolders}
+          excludeIds={[]}
+          title={`Move ${selectedCount} selected file${selectedCount !== 1 ? 's' : ''} to folder`}
         />
       )}
     </Layout>

@@ -93,22 +93,10 @@ function formatRelativeDate(dateString) {
   if (!dateString) return '--';
   try {
     const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-    });
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    return `${mm}/${dd}/${yyyy}`;
   } catch {
     return '--';
   }
@@ -119,6 +107,11 @@ function getFileIcon(type) {
   if (type.startsWith('image/')) return 'fa-image';
   if (type.startsWith('audio/')) return 'fa-music';
   if (type.startsWith('video/')) return 'fa-video';
+  if (type === 'application/pdf') return 'fa-file-pdf';
+  if (type.includes('word') || type === 'application/msword') return 'fa-file-word';
+  if (type.includes('excel') || type.includes('spreadsheet')) return 'fa-file-excel';
+  if (type.includes('powerpoint') || type.includes('presentation')) return 'fa-file-powerpoint';
+  if (type === 'text/plain' || type === 'text/csv') return 'fa-file-alt';
   return 'fa-file';
 }
 
@@ -127,6 +120,10 @@ function getFileIconColor(type) {
   if (type.startsWith('image/')) return 'text-violet-600 bg-violet-50';
   if (type.startsWith('audio/')) return 'text-sky-600 bg-sky-50';
   if (type.startsWith('video/')) return 'text-rose-500 bg-rose-50';
+  if (type === 'application/pdf') return 'text-red-600 bg-red-50';
+  if (type.includes('word') || type === 'application/msword') return 'text-blue-600 bg-blue-50';
+  if (type.includes('excel') || type.includes('spreadsheet')) return 'text-green-600 bg-green-50';
+  if (type.includes('powerpoint') || type.includes('presentation')) return 'text-orange-600 bg-orange-50';
   return 'text-gray-400 bg-gray-50';
 }
 
@@ -137,6 +134,7 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
   const { createFolder, renameFolder, moveFolder, deleteFolder, moveFileToFolder } = folderActions;
 
   const [statusFilter, setStatusFilter] = useState('');
+  const [serviceFilter, setServiceFilter] = useState('');
   const [sortBy, setSortBy] = useState('newest');
   const [searchQuery, setSearchQuery] = useState('');
   const [message, setMessage] = useState(null);
@@ -150,6 +148,8 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMoveActive, setBulkMoveActive] = useState(false);
+  const [bulkStatusTarget, setBulkStatusTarget] = useState(null); // status to apply in bulk
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState(null);
@@ -172,19 +172,28 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
     return result;
   }, [allFiles]);
 
-  // Files in current folder (or all files when searching)
+  // Unique service categories
+  const serviceCategories = useMemo(() => {
+    const cats = new Set();
+    for (const file of allFiles) {
+      if (file.serviceCategory) cats.add(file.serviceCategory);
+    }
+    return Array.from(cats).sort();
+  }, [allFiles]);
+
+  // Files in current folder (or all files when searching/filtering)
   const currentFolderFiles = useMemo(() => {
-    if (searchQuery.trim()) return allFiles;
+    if (searchQuery.trim() || statusFilter || serviceFilter) return allFiles;
     return allFiles.filter((f) => (f.folderId || null) === currentFolderId);
-  }, [allFiles, currentFolderId, searchQuery]);
+  }, [allFiles, currentFolderId, searchQuery, statusFilter, serviceFilter]);
 
   // Subfolders
   const currentSubfolders = useMemo(() => {
-    if (searchQuery.trim()) return [];
+    if (searchQuery.trim() || statusFilter || serviceFilter) return [];
     return allFolders
       .filter((f) => (f.parentId || null) === currentFolderId)
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [allFolders, currentFolderId, searchQuery]);
+  }, [allFolders, currentFolderId, searchQuery, statusFilter, serviceFilter]);
 
   // Item counts per folder
   const folderItemCounts = useMemo(() => {
@@ -205,14 +214,11 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
     let result = [...currentFolderFiles];
 
     if (statusFilter) result = result.filter((f) => f.status === statusFilter);
+    if (serviceFilter) result = result.filter((f) => f.serviceCategory === serviceFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       result = result.filter(
-        (f) =>
-          (f.originalName && f.originalName.toLowerCase().includes(q)) ||
-          (f.description && f.description.toLowerCase().includes(q)) ||
-          (f.uploadedByEmail && f.uploadedByEmail.toLowerCase().includes(q)) ||
-          (f.serviceCategory && f.serviceCategory.toLowerCase().includes(q))
+        (f) => f.originalName && f.originalName.toLowerCase().includes(q)
       );
     }
 
@@ -224,12 +230,12 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
       default: result.sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0)); break;
     }
     return result;
-  }, [currentFolderFiles, statusFilter, searchQuery, sortBy]);
+  }, [currentFolderFiles, statusFilter, serviceFilter, searchQuery, sortBy]);
 
   // Clear selection when filters change
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [statusFilter, searchQuery, sortBy, currentFolderId]);
+  }, [statusFilter, serviceFilter, searchQuery, sortBy, currentFolderId]);
 
   // Selection helpers
   const filteredIds = useMemo(() => new Set(filteredFiles.map((f) => f.id)), [filteredFiles]);
@@ -443,6 +449,103 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
     return [...ids];
   }, [allFolders]);
 
+  // Bulk move to folder
+  const handleBulkMove = useCallback(async (targetFolderId) => {
+    const ids = [...selectedIds].filter((id) => filteredIds.has(id));
+    if (ids.length === 0) return;
+    setBulkLoading(true);
+    setMessage(null);
+    try {
+      const token = await getIdToken();
+      const res = await fetch('/api/files/bulk-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ fileIds: ids, folderId: targetFolderId || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Move failed.');
+      setMessage({ type: 'success', text: `Moved ${data.moved} file(s).` });
+      setSelectedIds(new Set());
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setBulkLoading(false);
+      setBulkMoveActive(false);
+      setTimeout(() => setMessage(null), 3000);
+    }
+  }, [selectedIds, filteredIds, getIdToken]);
+
+  // Bulk status change
+  const handleBulkStatus = useCallback(async (newStatus) => {
+    const ids = [...selectedIds].filter((id) => filteredIds.has(id));
+    if (ids.length === 0) return;
+    setBulkLoading(true);
+    setMessage(null);
+    try {
+      const token = await getIdToken();
+      const res = await fetch('/api/files/bulk-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ fileIds: ids, status: newStatus }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Status change failed.');
+      setMessage({ type: 'success', text: `Updated ${data.updated} file(s) to "${newStatus}".` });
+      setSelectedIds(new Set());
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setBulkLoading(false);
+      setBulkStatusTarget(null);
+      setTimeout(() => setMessage(null), 3000);
+    }
+  }, [selectedIds, filteredIds, getIdToken]);
+
+  // Folder download as ZIP
+  const handleFolderDownload = useCallback(async (folder) => {
+    setMessage(null);
+    try {
+      const token = await getIdToken();
+      const res = await fetch(`/api/files/download-folder/${folder.id}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Download failed.');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${folder.name || 'folder'}-${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMessage({ type: 'success', text: `Downloading folder "${folder.name}" as ZIP.` });
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    } finally {
+      setTimeout(() => setMessage(null), 3000);
+    }
+  }, [getIdToken]);
+
+  // Ctrl+A → select all files in current view
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+        e.preventDefault();
+        if (filteredFiles.length > 0) {
+          setSelectedIds(new Set(filteredFiles.map((f) => f.id)));
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [filteredFiles]);
+
   // Context menu handlers
   const handleFileContextMenu = useCallback((e, file) => {
     e.preventDefault();
@@ -466,15 +569,17 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
           setRenameValue(folder.name);
         }},
         { icon: 'fa-arrows-alt', label: 'Move to...', onClick: () => setMoveTarget({ type: 'folder', item: folder }) },
+        { icon: 'fa-file-archive', label: 'Download as ZIP', onClick: () => handleFolderDownload(folder) },
         { divider: true },
         { icon: 'fa-trash-alt', label: 'Delete Folder', danger: true, onClick: () => setDeleteFolderConfirm(folder.id) },
       ];
     }
 
     const file = contextMenu.file;
-    return [
+    const isUrl = file.sourceType === 'url';
+    const items = [
       { icon: 'fa-eye', label: 'Preview', onClick: () => setPreviewFile(file) },
-      { icon: 'fa-download', label: 'Download', onClick: () => {
+      { icon: 'fa-download', label: 'Download', disabled: isUrl, onClick: isUrl ? () => {} : () => {
         const a = document.createElement('a');
         a.href = fileUrl(file.url);
         a.download = file.originalName;
@@ -490,14 +595,26 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
       { icon: 'fa-info-circle', label: 'Properties', onClick: () => setPropertiesFile(file) },
       { icon: 'fa-trash-alt', label: 'Delete', danger: true, onClick: () => { setDeleteConfirm(file.id); }},
     ];
-  }, [contextMenu, selectedIds, copyFileUrl]);
+
+    // When multiple files are selected, add bulk actions
+    const selCount = [...selectedIds].filter((id) => filteredIds.has(id)).length;
+    if (selCount > 1) {
+      items.push({ divider: true });
+      items.push({ icon: 'fa-arrows-alt', label: `Move ${selCount} Selected to Folder...`, onClick: () => setBulkMoveActive(true) });
+      items.push({ icon: 'fa-times-circle', label: 'Deselect All', onClick: () => setSelectedIds(new Set()) });
+      items.push({ icon: 'fa-trash-alt', label: `Delete ${selCount} Selected`, danger: true, onClick: () => setBulkDeleteConfirm(true) });
+    }
+
+    return items;
+  }, [contextMenu, selectedIds, filteredIds, copyFileUrl, handleFolderDownload]);
 
   const clearFilters = () => {
     setStatusFilter('');
+    setServiceFilter('');
     setSearchQuery('');
   };
 
-  const hasActiveFilters = statusFilter || searchQuery;
+  const hasActiveFilters = statusFilter || serviceFilter || searchQuery;
   const isSearching = searchQuery.trim().length > 0;
   const selectedCount = [...selectedIds].filter((id) => filteredIds.has(id)).length;
   const totalItems = currentSubfolders.length + filteredFiles.length;
@@ -576,7 +693,7 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by filename, description, or email..."
+              placeholder="Search by file name..."
               className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-dark-text placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
             />
             {searchQuery && (
@@ -585,6 +702,22 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
               </button>
             )}
           </div>
+
+          {serviceCategories.length > 0 && (
+            <div className="relative">
+              <select
+                value={serviceFilter}
+                onChange={(e) => setServiceFilter(e.target.value)}
+                className="appearance-none pl-4 pr-9 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-dark-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all min-w-[180px]"
+              >
+                <option value="">All Services</option>
+                {serviceCategories.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              <i className="fas fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-[10px] pointer-events-none"></i>
+            </div>
+          )}
 
           <div className="relative">
             <select
@@ -627,6 +760,12 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
                 <button onClick={() => setStatusFilter('')} className="hover:opacity-70"><i className="fas fa-times text-[8px]"></i></button>
               </span>
             )}
+            {serviceFilter && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-indigo-50 text-indigo-600">
+                {serviceFilter}
+                <button onClick={() => setServiceFilter('')} className="hover:opacity-70"><i className="fas fa-times text-[8px]"></i></button>
+              </span>
+            )}
             {searchQuery && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-gray-100 text-gray-600">
                 &quot;{searchQuery}&quot;
@@ -634,7 +773,7 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
               </span>
             )}
             <span className="text-xs text-gray-400 ml-1">
-              {isSearching ? 'Searching across all folders \u00b7 ' : ''}
+              {(isSearching || statusFilter || serviceFilter) ? 'Across all folders \u00b7 ' : ''}
               {filteredFiles.length} result{filteredFiles.length !== 1 ? 's' : ''}
             </span>
           </div>
@@ -661,6 +800,41 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
               {bulkLoading ? <i className="fas fa-spinner fa-spin text-[10px]"></i> : <i className="fas fa-download text-[10px]"></i>}
               Download ZIP
             </button>
+            <button
+              onClick={() => setBulkMoveActive(true)}
+              disabled={bulkLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+            >
+              <i className="fas fa-folder-open text-[10px]"></i>
+              Move to Folder
+            </button>
+            {bulkStatusTarget ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-500 font-medium">Set status:</span>
+                {STATUS_OPTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => handleBulkStatus(s)}
+                    disabled={bulkLoading}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${STATUS_CONFIG[s].bg} ${STATUS_CONFIG[s].text} border ${STATUS_CONFIG[s].border}`}
+                  >
+                    {s === 'pending' ? 'Pending' : s === 'in-progress' ? 'In Progress' : 'Transcribed'}
+                  </button>
+                ))}
+                <button onClick={() => setBulkStatusTarget(null)} className="text-gray-400 hover:text-gray-600 px-1">
+                  <i className="fas fa-times text-xs"></i>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setBulkStatusTarget(true)}
+                disabled={bulkLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-sky-600 bg-sky-50 hover:bg-sky-100 transition-colors disabled:opacity-50"
+              >
+                <i className="fas fa-exchange-alt text-[10px]"></i>
+                Change Status
+              </button>
+            )}
             {bulkDeleteConfirm ? (
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-red-600 font-medium">Delete {selectedCount} files?</span>
@@ -1103,6 +1277,7 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
             >
               <input type="checkbox" checked={allSelected} readOnly className="w-3.5 h-3.5 rounded border-gray-300 text-primary pointer-events-none" />
               {allSelected ? 'Deselect All' : 'Select All'}
+              <span className="text-gray-300 font-mono text-[9px]">Ctrl+A</span>
             </button>
           </div>
         </div>
@@ -1141,6 +1316,18 @@ function FilesTab({ allFiles, allFolders, filesLoading, filesError, foldersLoadi
           folders={allFolders}
           excludeIds={moveTarget.type === 'folder' ? getDescendantIds(moveTarget.item.id) : []}
           title={moveTarget.type === 'file' ? `Move "${moveTarget.item.originalName}"` : `Move "${moveTarget.item.name}"`}
+        />
+      )}
+
+      {/* Bulk Move Modal */}
+      {bulkMoveActive && (
+        <MoveFolderModal
+          isOpen={true}
+          onClose={() => setBulkMoveActive(false)}
+          onSelect={handleBulkMove}
+          folders={allFolders}
+          excludeIds={[]}
+          title={`Move ${selectedCount} selected file${selectedCount !== 1 ? 's' : ''} to folder`}
         />
       )}
     </div>
